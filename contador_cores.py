@@ -1,18 +1,15 @@
 import cv2
 import numpy as np
-import pandas as pd
-from picamera import PiCamera
-from time import sleep, time
-import os
+import time
+import signal
+import sys
 from datetime import datetime
 
-# Inicializa a câmera Pi uma única vez
-camera = PiCamera()
-camera.resolution = (640, 480)
-sleep(2)  # Aguarda estabilização da câmera
+# Define o intervalo de tempo para impressão no terminal (em segundos)
+INTERVALO_ATUALIZACAO = 300  # 5 minutos
 
 # Dicionário com faixas de cores HSV para detectar
-color_ranges = {
+cores_hsv = {
     'vermelho': [(0, 100, 100), (10, 255, 255)],  
     'verde': [(40, 40, 40), (70, 255, 255)],
     'azul': [(100, 100, 100), (130, 255, 255)],
@@ -20,64 +17,94 @@ color_ranges = {
     'laranja': [(10, 100, 100), (25, 255, 255)]
 }
 
-# Contadores acumulados por cor
-contagem_total = {cor: 0 for cor in color_ranges}
+# Inicializa a câmera Pi uma única vez
+camera = cv2.VideoCapture(0)
+camera.set(3, 640)
+camera.set(4, 480)
 
-# Tempo de referência para a saída a cada 5 minutos
-inicio_loop = time()
+# Captura sinal de interrupção para encerrar o programa corretamente
+def finalizar_programa(sig, frame):
+    print("\nEncerrando o programa...")
+    camera.release()
+    cv2.destroyAllWindows()
+    sys.exit(0)
 
-try:
-    while True:
-        # Captura a imagem
-        imagem_path = '/home/pi/imagem.jpg'
-        camera.capture(imagem_path)
+signal.signal(signal.SIGINT, finalizar_programa)
 
-        # Carrega e converte a imagem para HSV
-        image = cv2.imread(imagem_path)
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+ultimo_relatorio = time.time()
 
-        resultados_atuais = []  # Contagem atual por cor
+print("Sistema de reconhecimento de cores iniciado...")
 
-        for cor, (lower, upper) in color_ranges.items():
-            # Cria máscara e aplica morfologia
-            mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
-            kernel = np.ones((5, 5), np.uint8)
-            mask = cv2.erode(mask, kernel, iterations=1)
-            mask = cv2.dilate(mask, kernel, iterations=1)
 
-            # Encontra e filtra contornos
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            contornos_filtrados = [cnt for cnt in contours if cv2.contourArea(cnt) > 100]
+while True:
+    # Captura a imagem
+    ret, frame = camera.read()
+    if not ret:
+        continue
 
-            # Atualiza contagem
-            quantidade = len(contornos_filtrados)
-            contagem_total[cor] += quantidade
-            resultados_atuais.append({'Cor': cor, 'Quantidade': quantidade})
+    # Redimensiona, aplica blur e converte para HSV
+    frame_resized = cv2.resize(frame, (320, 240))
+    blur = cv2.GaussianBlur(frame_resized, (5, 5), 0)
+    hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
 
-            # Desenha os contornos detectados
-            for cnt in contornos_filtrados:
-                cv2.drawContours(image, [cnt], -1, (0, 255, 255), 2)
+    # Define regiões de interesse (filas)
+    regioes = [
+        ((60, 50, 120, 100), hsv[50:100, 60:120]),   # Regiao 1
+        ((130, 50, 190, 100), hsv[50:100, 130:190]), # Regiao 2
+        ((200, 50, 260, 100), hsv[50:100, 200:260])  # Regiao 3
+    ]
 
-        # Salva imagem com contornos
-        cv2.imwrite('/home/pi/imagem_processada.jpg', image)
+    resultado_filiera = []
+    contagem_cores = {cor: 0 for cor in cores_hsv.keys()}
+    
+    # Processa cada fileira
+    for idx, (coords, roi) in enumerate(regioes):
+        media_h = np.median(roi[:, :, 0])  # Usa mediana para maior robustez
 
-        # Salva contagem atual como CSV (opcional, sobrescreve)
-        df = pd.DataFrame(resultados_atuais)
-        df.to_csv('/home/pi/contagem_cores_atual.csv', index=False)
+        cor_dominante = None
+        for cor, (lim_inf, lim_sup) in cores_hsv.items():
+            if lim_inf[0] <= media_h <= lim_sup[0]:
+                cor_dominante = cor
+                contagem_cores[cor] += 1
+                break
 
-        # A cada 5 minutos, exibe contagem acumulada no terminal
-        tempo_agora = time()
-        if tempo_agora - inicio_loop >= 300:  # 300 segundos = 5 minutos
-            print("\n[Resumo a cada 5 minutos]")
-            for cor, total in contagem_total.items():
-                print(f"{cor}: {total} bolinhas detectadas")
-            print("------")
-            inicio_loop = tempo_agora  # reinicia contagem do tempo
+        if cor_dominante:
+            resultado_filiera.append("preenchida")
+            # Desenha o retângulo e escreve a cor detectada
+            x1, y1, x2, y2 = coords
+            cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame_resized, cor_dominante, (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+        else:
+            resultado_filiera.append("vazia")
+            # Desenha o retângulo vazio
+            x1, y1, x2, y2 = coords
+            cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            cv2.putText(frame_resized, "vazio", (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
 
-        sleep(10)  # Espera 10 segundos antes de capturar nova imagem
+    # Verifica se alguma fileira está vazia e emite notificação
+    if "vazia" in resultado_filiera:
+        print(f"[Aviso - {datetime.now().strftime('%H:%M:%S')}] Alguma fileira está vazia. Notificando estoquista...")
+    else:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Todas as fileiras estão preenchidas.")
 
-except Exception as e:
-    # Salva erro no log
-    with open('/home/pi/erro_log.txt', 'a') as f:
-        f.write(f"{datetime.now()}: {str(e)}\n")
-    print("Erro detectado. Veja erro_log.txt para detalhes.")
+    # Exibe contagem de bolinhas a cada INTERVALO_ATUALIZACAO segundos
+    tempo_atual = time.time()
+    if tempo_atual - ultimo_relatorio >= INTERVALO_ATUALIZACAO:
+        print("\nRelatório de contagem de bolinhas:")
+        for cor, contagem in contagem_cores.items():
+            print(f" - {cor.capitalize()}: {contagem}")
+        print("-")
+        ultimo_relatorio = tempo_atual
+
+    # Exibe imagem com identificações
+    cv2.imshow("Camera", frame_resized)
+
+    # Aguarda por tecla por 1ms (necessário para o OpenCV funcionar corretamente)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Libera recursos
+finalizar_programa(None, None)
+
