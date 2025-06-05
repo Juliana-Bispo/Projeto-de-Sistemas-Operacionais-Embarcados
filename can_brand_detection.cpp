@@ -76,7 +76,7 @@ vector<SodaCan> detectSodaCans(Mat &frame) {
 }
 
 int main() {
-    VideoCapture cap(0);
+    VideoCapture cap("/dev/video0", cv::CAP_V4L2);
     if (!cap.isOpened()) {
         cerr << "Erro ao abrir a câmera!" << endl;
         return -1;
