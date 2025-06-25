@@ -1,4 +1,6 @@
 #include <opencv2/opencv.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/highgui.hpp>
 #include <iostream>
 #include <map>
 
@@ -6,35 +8,33 @@ using namespace cv;
 using namespace std;
 
 // Detecta cor dominante HSV em uma imagem
-string detectarCorPredominante(const Mat& hsv) {
+string detectarCorPredominante(const Mat& bgr_roi) {
     Mat hsv;
     cvtColor(bgr_roi, hsv, COLOR_BGR2HSV);
 
-    // Aplica CLAHE no canal V (brilho)
     vector<Mat> hsv_channels;
     split(hsv, hsv_channels);  // H, S, V
 
+    if (hsv_channels.size() != 3) {
+        return "Desconhecido";
+    }
+
     Ptr<CLAHE> clahe = createCLAHE();
     clahe->setClipLimit(4.0);
-    clahe->apply(hsv_channels[2], hsv_channels[2]); // equaliza o canal V
+    clahe->apply(hsv_channels[2], hsv_channels[2]);  // Equaliza o brilho
 
     merge(hsv_channels, hsv);
 
-    // Blur leve para suavizar reflexos e ruídos
     GaussianBlur(hsv, hsv, Size(5, 5), 0);
 
-    // Cria máscara de brilho mínimo
     Mat brilhoMask;
-    inRange(hsv_channels[2], Scalar(40), Scalar(255), brilhoMask);   
-    
-    
-    
+    inRange(hsv_channels[2], 40, 255, brilhoMask);
+
     map<string, int> contador;
 
-    // Máscaras de cor
     vector<pair<string, Scalar>> coresInferiores = {
         {"Verde", Scalar(35, 50, 40)},
-        {"Vermelho1", Scalar(0, 700, 40)},
+        {"Vermelho1", Scalar(0, 70, 40)},
         {"Vermelho2", Scalar(170, 70, 40)},
         {"Azul", Scalar(90, 40, 40)},
         {"Laranja", Scalar(11, 100, 50)},
@@ -53,18 +53,13 @@ string detectarCorPredominante(const Mat& hsv) {
     for (size_t i = 0; i < coresInferiores.size(); ++i) {
         Mat mask;
         inRange(hsv, coresInferiores[i].second, coresSuperiores[i].second, mask);
-        
-        // Combina com a máscara de brilho
         bitwise_and(mask, brilhoMask, mask);
-        
         int count = countNonZero(mask);
         contador[coresInferiores[i].first] += count;
     }
 
-    // Agrupar vermelho 1 e 2
     contador["Vermelho"] = contador["Vermelho1"] + contador["Vermelho2"];
 
-    // Determina cor com maior contagem
     string corDominante = "Desconhecido";
     int maxPix = 0;
     for (auto& par : contador) {
@@ -74,10 +69,10 @@ string detectarCorPredominante(const Mat& hsv) {
         }
     }
 
-    return corDominante;
-}
+    return corDominante;  // <-- AQUI estava faltando a chave de fechamento
+}  // <- ESSA chave fecha a função 'detectarCorPredominante'
 
-// Classifica marca com base na cor
+// Agora sim é permitido definir outra função fora dela
 string classificarMarcaPorCor(const string& cor) {
     if (cor == "Verde") return "Guaraná";
     if (cor == "Vermelho") return "Coca-Cola";
@@ -86,6 +81,7 @@ string classificarMarcaPorCor(const string& cor) {
     if (cor == "Roxo") return "Fanta Uva";
     return "Desconhecida";
 }
+
 
 int main() {
     VideoCapture cap(0);
