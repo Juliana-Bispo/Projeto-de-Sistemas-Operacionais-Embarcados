@@ -145,7 +145,7 @@ string classificarMarcaPorCor(const string& cor) {
 }
 
 // ===================================================================
-// ESTRUTURAS DO PIPELINE E FILA THREAD-SAFE
+// ESTRUTURAS DO PIPELINE E FILA THREAD-SAFE (VERSÃO CORRETA E COMPLETA)
 // ===================================================================
 
 struct FrameData { Mat frame; int frame_id; };
@@ -168,7 +168,6 @@ public:
         lock_guard<mutex> lock(mutex_);
         if (shutdown_) return;
 
-        // OTIMIZAÇÃO DE LATÊNCIA: Impede que a fila cresça e armazene frames antigos.
         if (max_size_ > 0 && queue_.size() >= max_size_) {
             queue_.pop(); 
         }
@@ -180,7 +179,11 @@ public:
     bool pop(T& item) {
         unique_lock<mutex> lock(mutex_);
         cond_.wait(lock, [this]() { return !queue_.empty() || shutdown_; });
-        if (shutdown_ && queue_.empty()) return false;
+        
+        if (shutdown_ && queue_.empty()) {
+            return false;
+        }
+        
         item = move(queue_.front());
         queue_.pop();
         return true;
@@ -188,7 +191,9 @@ public:
 
     bool try_pop(T& item) {
         lock_guard<mutex> lock(mutex_);
-        if (queue_.empty() || shutdown_) return false;
+        if (queue_.empty() || shutdown_) {
+            return false;
+        }
         item = move(queue_.front());
         queue_.pop();
         return true;
@@ -224,7 +229,6 @@ void threadCapturaVideo(VideoCapture& cap) {
         }
         
         rawFrameQueue.push(FrameData{frame.clone(), 0});
-        // O sleep fixo foi removido para capturar frames o mais rápido possível
     }
     cout << "Thread de captura finalizada" << endl;
 }
@@ -237,7 +241,6 @@ void threadPreprocessamento() {
         
         Mat gray;
         cvtColor(frameData.frame, gray, COLOR_BGR2GRAY);
-        // OTIMIZAÇÃO: Kernel menor é mais rápido no RPi
         GaussianBlur(gray, gray, Size(3, 3), 0);
         
         Mat edges;
@@ -269,7 +272,7 @@ void threadDetecao(GerenciadorPrateleira& prateleira) {
         for (const auto& contorno : pframe.contours) {
             Rect bbox = boundingRect(contorno);
 
-            if (bbox.height < 50 || bbox.width < 15) continue; // Ajustado para resolução menor
+            if (bbox.height < 50 || bbox.width < 15) continue;
             float proporcao = (float)bbox.height / bbox.width;
             if (proporcao < 1.5 || proporcao > 4.5) continue;
 
@@ -308,17 +311,15 @@ void threadDetecao(GerenciadorPrateleira& prateleira) {
 // ===================================================================
 
 int main() {
-    // OTIMIZAÇÃO: Especifica o backend da câmera para Linux
     VideoCapture cap(0, CAP_V4L2);
     if (!cap.isOpened()) {
         cerr << "Erro ao abrir câmera" << endl;
         return -1;
     }
 
-    // OTIMIZAÇÃO: Define a resolução menor
     cap.set(CAP_PROP_FRAME_WIDTH, FRAME_WIDTH);
     cap.set(CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT);
-    cap.set(CAP_PROP_FPS, 30); // Tenta definir 30fps
+    cap.set(CAP_PROP_FPS, 30);
 
     namedWindow("Detector de Latas - RPi", WINDOW_NORMAL);
     namedWindow("Controle de Estoque", WINDOW_NORMAL);
