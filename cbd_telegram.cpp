@@ -9,7 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <curl/curl.h>          //config do bot
+#include <curl/curl.h>
 
 using namespace cv;
 using namespace std;
@@ -20,7 +20,7 @@ using namespace std;
 
 void enviarAlertaTelegram(const string& mensagem) {
     string token = "8032466567:AAHzaRC_RHM7peoVXQBwYdSv6MG57MkOZtA";       
-    string chat_id = "996099722";   
+    string chat_id = "996099722";    
 
     string url = "https://api.telegram.org/bot" + token +
                  "/sendMessage?chat_id=" + chat_id +
@@ -29,14 +29,16 @@ void enviarAlertaTelegram(const string& mensagem) {
     CURL* curl = curl_easy_init();
     if (curl) {
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L); // Timeout de 10 segundos
         CURLcode res = curl_easy_perform(curl);
         curl_easy_cleanup(curl);
         if (res != CURLE_OK) {
             cerr << "Erro ao enviar alerta: " << curl_easy_strerror(res) << endl;
+        } else {
+            cout << "Alerta enviado: " << mensagem << endl;
         }
     }
 }
-
 
 // ===================================================================
 // CONFIGURAÇÕES GLOBAIS E DE OTIMIZAÇÃO
@@ -54,31 +56,57 @@ struct GerenciadorPrateleira {
     Rect prateleiraArea; 
     int capacidadeTotal;
     map<string, int> contagemMarcas;
+    map<string, int> contagemAnterior; // Para comparar mudanças
     mutable mutex mtx;
 
     GerenciadorPrateleira() {
-        // ATUALIZAÇÃO: Área da prateleira foi aumentada. Ajuste conforme necessário.
-        prateleiraArea = Rect(20, 40, 280, 180); // (x, y, largura, altura)
+        prateleiraArea = Rect(20, 40, 280, 180);
         capacidadeTotal = 4;
         
-        // ATUALIZAÇÃO: "Guaraná" foi alterado para "Guarana"
         contagemMarcas["Guarana"] = 0;
         contagemMarcas["Coca-Cola"] = 0;
         contagemMarcas["Pepsi"] = 0;
         contagemMarcas["Fanta Laranja"] = 0;
         contagemMarcas["Desconhecida"] = 0;
+        
+        // Inicializa contagem anterior
+        contagemAnterior = contagemMarcas;
     }
 
     void atualizarContagem(const map<string, int>& novasDeteccoes) {
         lock_guard<mutex> lock(mtx);
+        
+        // Salva estado anterior
+        contagemAnterior = contagemMarcas;
+        
+        // Zera contadores
         for (auto& par : contagemMarcas) {
             par.second = 0;
         }
+        
+        // Atualiza com novas detecções
         for (auto const& [marca, contagem] : novasDeteccoes) {
             if (contagemMarcas.count(marca)) {
                 contagemMarcas[marca] = contagem;
             }
         }
+    }
+
+    bool houveMudancaSignificativa() const {
+        lock_guard<mutex> lock(mtx);
+        for (auto const& [marca, contagem] : contagemMarcas) {
+            if (marca != "Desconhecida") {
+                if (abs(contagem - contagemAnterior.at(marca)) > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    map<string, int> getContagemAtual() const {
+        lock_guard<mutex> lock(mtx);
+        return contagemMarcas;
     }
 
     Mat criarJanelaEstoque() const {
@@ -90,11 +118,12 @@ struct GerenciadorPrateleira {
         int y = 70;
         int totalLatas = 0;
         for (auto const& [marca, contagem] : contagemMarcas) {
-            if (marca != "Desconhecida" && contagem > 0) {
-                 putText(janela, marca + ":", Point(20, y), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 255, 255), 1);
-                 putText(janela, to_string(contagem), Point(200, y), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 255), 2);
-                 y += 30;
-                 totalLatas += contagem;
+            if (marca != "Desconhecida") {
+                Scalar cor = (contagem == 0) ? Scalar(0, 0, 255) : Scalar(255, 255, 255); // Vermelho se vazio
+                putText(janela, marca + ":", Point(20, y), FONT_HERSHEY_SIMPLEX, 0.6, cor, 1);
+                putText(janela, to_string(contagem), Point(200, y), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 255), 2);
+                y += 30;
+                totalLatas += contagem;
             }
         }
         
@@ -113,7 +142,110 @@ struct GerenciadorPrateleira {
 };
 
 // ===================================================================
-// FUNÇÕES DE PROCESSAMENTO DE IMAGEM
+// SISTEMA DE ALERTAS MELHORADO
+// ===================================================================
+
+class SistemaAlertas {
+private:
+    map<string, bool> alertaEnviado;
+    map<string, chrono::steady_clock::time_point> ultimoAlertaPorMarca;
+    chrono::steady_clock::time_point ultimaVerificacao;
+    const chrono::seconds intervaloVerificacao;
+    const chrono::minutes intervaloReenvio; // Intervalo para reenviar mesmo alerta
+    mutable mutex mtx;
+
+public:
+    SistemaAlertas() : 
+        intervaloVerificacao(30), 
+        intervaloReenvio(10), // Reenvia após 10 minutos
+        ultimaVerificacao(chrono::steady_clock::now()) {}
+
+    void verificarEEnviarAlertas(const map<string, int>& contagem) {
+        lock_guard<mutex> lock(mtx);
+        auto agora = chrono::steady_clock::now();
+        
+        // Verifica se é hora de verificar novamente
+        if ((agora - ultimaVerificacao) < intervaloVerificacao) {
+            return;
+        }
+        
+        cout << "Verificando estoque..." << endl;
+        
+        for (const auto& [marca, qtd] : contagem) {
+            if (marca == "Desconhecida") continue;
+            
+            if (qtd == 0) {
+                // Produto em falta
+                bool deveEnviar = false;
+                
+                if (!alertaEnviado[marca]) {
+                    // Primeiro alerta para esta marca
+                    deveEnviar = true;
+                    alertaEnviado[marca] = true;
+                } else if (ultimoAlertaPorMarca.count(marca) && 
+                          (agora - ultimoAlertaPorMarca[marca]) >= intervaloReenvio) {
+                    // Reenvia após intervalo
+                    deveEnviar = true;
+                }
+                
+                if (deveEnviar) {
+                    string msg = "⚠️ *ATENÇÃO*: Falta o refrigerante *" + marca + "* na prateleira!\n";
+                    msg += "🔄 Necessário reposição imediata.";
+                    
+                    // Envia em thread separada para não bloquear
+                    thread([msg]() {
+                        enviarAlertaTelegram(msg);
+                    }).detach();
+                    
+                    ultimoAlertaPorMarca[marca] = agora;
+                }
+            } else {
+                // Produto disponível
+                if (alertaEnviado[marca]) {
+                    // Envia confirmação de reposição
+                    string msg = "✅ *REABASTECIDO*: " + marca + " foi reposto na prateleira!\n";
+                    msg += "📊 Quantidade atual: " + to_string(qtd);
+                    
+                    thread([msg]() {
+                        enviarAlertaTelegram(msg);
+                    }).detach();
+                    
+                    alertaEnviado[marca] = false;
+                }
+            }
+        }
+        
+        ultimaVerificacao = agora;
+    }
+    
+    void enviarResumoEstoque(const map<string, int>& contagem) {
+        lock_guard<mutex> lock(mtx);
+        
+        string msg = "📋 *RESUMO DO ESTOQUE*\n\n";
+        int totalLatas = 0;
+        int marcasEmFalta = 0;
+        
+        for (const auto& [marca, qtd] : contagem) {
+            if (marca != "Desconhecida") {
+                msg += "• " + marca + ": " + to_string(qtd) + "\n";
+                totalLatas += qtd;
+                if (qtd == 0) marcasEmFalta++;
+            }
+        }
+        
+        msg += "\n📊 Total: " + to_string(totalLatas) + " latas";
+        if (marcasEmFalta > 0) {
+            msg += "\n⚠️ Marcas em falta: " + to_string(marcasEmFalta);
+        }
+        
+        thread([msg]() {
+            enviarAlertaTelegram(msg);
+        }).detach();
+    }
+};
+
+// ===================================================================
+// FUNÇÕES DE PROCESSAMENTO DE IMAGEM (mantidas iguais)
 // ===================================================================
 
 string detectarCorPredominante(const Mat& bgr_roi) {
@@ -157,7 +289,6 @@ string detectarCorPredominante(const Mat& bgr_roi) {
 }
 
 string classificarMarcaPorCor(const string& cor) {
-    // ATUALIZAÇÃO: "Guaraná" foi alterado para "Guarana"
     if (cor == "Verde") return "Guarana";
     if (cor == "Vermelho") return "Coca-Cola";
     if (cor == "Azul") return "Pepsi";
@@ -166,7 +297,7 @@ string classificarMarcaPorCor(const string& cor) {
 }
 
 // ===================================================================
-// ESTRUTURAS DO PIPELINE E FILA THREAD-SAFE
+// ESTRUTURAS DO PIPELINE (mantidas iguais)
 // ===================================================================
 
 struct FrameData { Mat frame; int frame_id; };
@@ -231,7 +362,7 @@ ThreadSafeQueue<ProcessedFrame> preprocessedQueue(MAX_QUEUE_SIZE);
 ThreadSafeQueue<DetectionResult> resultQueue(MAX_QUEUE_SIZE);
 
 // ===================================================================
-// THREADS DO PIPELINE
+// THREADS DO PIPELINE (mantidas iguais)
 // ===================================================================
 
 void threadCapturaVideo(VideoCapture& cap) {
@@ -304,11 +435,8 @@ void threadDetecao(GerenciadorPrateleira& prateleira) {
     cout << "Thread de detecção finalizada" << endl;
 }
 
-auto tempoUltimoAviso = chrono::steady_clock::now();
-const chrono::seconds intervaloAviso(30);
-
 // ===================================================================
-// FUNÇÃO PRINCIPAL
+// FUNÇÃO PRINCIPAL MODIFICADA
 // ===================================================================
 
 int main() {
@@ -326,10 +454,7 @@ int main() {
     namedWindow("Controle de Estoque", WINDOW_NORMAL);
     
     GerenciadorPrateleira prateleira;
-
-
-
-
+    SistemaAlertas sistemaAlertas;
     
     cout << "Iniciando threads..." << endl;
     
@@ -341,31 +466,30 @@ int main() {
         detectionThreads.emplace_back(threadDetecao, ref(prateleira));
     }
     
+    // Thread para enviar resumo periódico (a cada 5 minutos)
+    thread threadResumo([&]() {
+        while (!shouldStop) {
+            this_thread::sleep_for(chrono::minutes(5));
+            if (!shouldStop) {
+                sistemaAlertas.enviarResumoEstoque(prateleira.getContagemAtual());
+            }
+        }
+    });
+    
     cout << "Sistema iniciado. Pressione ESC para sair." << endl;
+    
+    // Envia mensagem de início
+    thread([]() {
+        enviarAlertaTelegram("🤖 Sistema de controle de estoque iniciado!");
+    }).detach();
 
     while (true) {
         DetectionResult result;
         if (resultQueue.try_pop(result)) {
             prateleira.atualizarContagem(result.marcasDetectadas);
-
-            auto agora = chrono::steady_clock::now();
-            static map<string, bool> alertaEnviado;
-
-            if ((agora - tempoUltimoAviso) >= intervaloAviso) {
-                for (const auto& [marca, qtd] : result.marcasDetectadas) {
-                    if (marca != "Desconhecida") {
-                        if (qtd == 0 && !alertaEnviado[marca]) {
-                            string msg = "⚠️ *ATENÇÃO*: Falta o refrigerante *" + marca + "* na prateleira!";
-                            enviarAlertaTelegram(msg);
-                            alertaEnviado[marca] = true;
-                        } else if (qtd > 0 && alertaEnviado[marca]) {
-                            alertaEnviado[marca] = false;
-                        }
-                    }
-                }
-                tempoUltimoAviso = agora; // Atualiza relógio
-            }
-
+            
+            // Sistema de alertas inteligente
+            sistemaAlertas.verificarEEnviarAlertas(result.marcasDetectadas);
 
             imshow("Detector de Latas - RPi", result.processedFrame);
         } else {
@@ -390,12 +514,20 @@ int main() {
     
     threadCaptura.join();
     threadPreproc.join();
+    threadResumo.join();
     for (auto& t : detectionThreads) {
         t.join();
     }
 
     cap.release();
     destroyAllWindows();
+    
+    // Envia mensagem de finalização
+    thread([]() {
+        enviarAlertaTelegram("🔴 Sistema de controle de estoque finalizado.");
+    }).detach();
+    
+    this_thread::sleep_for(chrono::seconds(2)); // Aguarda envio da mensagem
     
     cout << "Programa finalizado." << endl;
     return 0;
