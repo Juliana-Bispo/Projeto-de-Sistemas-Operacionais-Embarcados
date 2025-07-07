@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <chrono>
 
 class GerenciadorPrateleira {
 public:
@@ -23,6 +24,12 @@ private:
 
     // Mapa para controlar o estado da notificação para cada marca
     std::map<std::string, bool> notificacaoEnviada; 
+    // ADICIONADO: Controle de tempo para notificações
+    std::chrono::steady_clock::time_point ultimaVerificacao;
+    static const int INTERVALO_VERIFICACAO_SEGUNDOS = 30;
+    
+    // ADICIONADO: Método auxiliar para verificar se deve checar notificações
+    bool deveVerificarNotificacao();
     // --- FIM DAS ALTERAÇÕES ---
 
     cv::Rect prateleiraArea; 
