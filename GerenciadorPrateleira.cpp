@@ -20,9 +20,23 @@ GerenciadorPrateleira::GerenciadorPrateleira() {
         contagemMarcas[marca] = 0;
         notificacaoEnviada[marca] = false; // Inicia como "nenhuma notificação foi enviada"
     }
+    // ADICIONADO: Inicializa o tempo da última verificação
+    ultimaVerificacao = std::chrono::steady_clock::now();
 }
 
-// A função 'atualizarContagem' foi completamente substituída por esta versão com a lógica de notificação.
+// ADICIONADO: Método auxiliar para verificar se deve checar notificações
+bool GerenciadorPrateleira::deveVerificarNotificacao() {
+    auto agora = std::chrono::steady_clock::now();
+    auto tempoDecorrido = std::chrono::duration_cast<std::chrono::seconds>(agora - ultimaVerificacao).count();
+    
+    if (tempoDecorrido >= INTERVALO_VERIFICACAO_SEGUNDOS) {
+        ultimaVerificacao = agora;
+        return true;
+    }
+    return false;
+}
+
+// MODIFICADO: A função 'atualizarContagem' agora verifica o tempo antes de enviar notificações
 void GerenciadorPrateleira::atualizarContagem(const map<string, int>& novasDeteccoes) {
     lock_guard<mutex> lock(mtx);
     
@@ -41,22 +55,26 @@ void GerenciadorPrateleira::atualizarContagem(const map<string, int>& novasDetec
 
     // --- LÓGICA DE NOTIFICAÇÃO ---
     // Compara o estado novo com o anterior para decidir se envia a mensagem
-    for (auto const& [marca, contagemAtual] : contagemMarcas) {
-        if (marca == "Desconhecida") continue; // Não notificar para latas desconhecidas
+    if (deveVerificarNotificacao()) {
+        cout << "VERIFICANDO NOTIFICACOES... (30 segundos se passaram)" << endl;
+        
+        for (auto const& [marca, contagemAtual] : contagemMarcas) {
+            if (marca == "Desconhecida") continue; // Não notificar para latas desconhecidas
 
-        int contagemAnt = contagemAnterior[marca];
+            int contagemAnt = contagemAnterior[marca];
 
-        // CONDIÇÃO 1: A lata sumiu (contagem foi de >0 para 0) E a notificação ainda não foi enviada
-        if (contagemAtual == 0 && contagemAnt > 0 && !notificacaoEnviada[marca]) {
-            string mensagem = "ALERTA: Estoque de " + marca + " esta em falta!";
-            cout << "ENVIANDO NOTIFICACAO: " << mensagem << endl;
-            enviarNotificacaoTelegram(mensagem);
-            notificacaoEnviada[marca] = true; // Marca que a notificação foi enviada para evitar spam
-        } 
-        // CONDIÇÃO 2: A lata voltou ao estoque, então resetamos o status
-        else if (contagemAtual > 0 && notificacaoEnviada[marca]) {
-            cout << "RESETANDO STATUS DE NOTIFICACAO PARA: " << marca << endl;
-            notificacaoEnviada[marca] = false; // Permite que seja notificado novamente no futuro se faltar
+            // CONDIÇÃO 1: A lata sumiu (contagem foi de >0 para 0) E a notificação ainda não foi enviada
+            if (contagemAtual == 0 && contagemAnt > 0 && !notificacaoEnviada[marca]) {
+                string mensagem = "ALERTA: Estoque de " + marca + " esta em falta!";
+                cout << "ENVIANDO NOTIFICACAO: " << mensagem << endl;
+                enviarNotificacaoTelegram(mensagem);
+                notificacaoEnviada[marca] = true; // Marca que a notificação foi enviada para evitar spam
+            } 
+            // CONDIÇÃO 2: A lata voltou ao estoque, então resetamos o status
+            else if (contagemAtual > 0 && notificacaoEnviada[marca]) {
+                cout << "RESETANDO STATUS DE NOTIFICACAO PARA: " << marca << endl;
+                notificacaoEnviada[marca] = false; // Permite que seja notificado novamente no futuro se faltar
+            }
         }
     }
 }
