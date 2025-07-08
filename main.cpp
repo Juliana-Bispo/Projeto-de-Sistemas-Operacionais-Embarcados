@@ -3,6 +3,7 @@
 #include <vector>
 #include "GerenciadorPrateleira.hpp"
 #include "pipeline.hpp"
+#include <chrono>
 
 using namespace cv;
 using namespace std;
@@ -26,6 +27,15 @@ int main() {
     namedWindow("Controle de Estoque", WINDOW_NORMAL);
     
     GerenciadorPrateleira prateleira;
+
+    // --- INÍCIO DAS ALTERAÇÕES ---
+    // Inicia o envio periódico de atualizações no Telegram a cada 30 segundos
+    prateleira.iniciarEnvioPeriodico();
+    cout << "Sistema de notificações Telegram iniciado (envio a cada 30 segundos)" << endl;
+    
+    // Opcional: Se quiser alterar o intervalo para outro valor (exemplo: 60 segundos)
+    // prateleira.definirIntervaloEnvio(60);
+    // --- FIM DAS ALTERAÇÕES ---
     
     cout << "Iniciando threads..." << endl;
     
@@ -58,6 +68,12 @@ int main() {
     }
 
     cout << "Finalizando threads..." << endl;
+
+    // --- INÍCIO DAS ALTERAÇÕES ---
+    // Para o envio periódico antes de finalizar o programa
+    prateleira.pararEnvioPeriodico();
+    cout << "Sistema de notificações Telegram finalizado." << endl;
+    // --- FIM DAS ALTERAÇÕES ---
     
     shouldStop = true;
     rawFrameQueue.shutdown();
