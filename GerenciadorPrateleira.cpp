@@ -58,7 +58,7 @@ void GerenciadorPrateleira::atualizarContagem(const map<string, int>& novasDetec
         for (auto const& [marca, contagemAtual] : contagemMarcas) {
             if (marca == "Desconhecida") continue; // Não notificar para latas desconhecidas
 
-            int contagemAnt = contagemAnterior[marca];
+            int contagemAnt = estadoAnterior[marca];
 
             cout << "DEBUG: " << marca << " - Anterior: " << contagemAnt << ", Atual: " << contagemAtual << ", Notificacao enviada: " << (notificacaoEnviada[marca] ? "SIM" : "NAO") << endl;
 
