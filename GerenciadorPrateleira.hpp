@@ -16,27 +16,25 @@ public:
     void atualizarContagem(const std::map<std::string, int>& novasDeteccoes);
     cv::Mat criarJanelaEstoque() const;
     const cv::Rect& getAreaPrateleira() const; // Para a thread de detecção acessar a área
+    void verificarTempoNotificacao(); // Novo método
 
 private:
     // --- INÍCIO DAS ALTERAÇÕES ---
     // Função privada para enviar a mensagem
     void enviarNotificacaoTelegram(const std::string& mensagem);
+    void enviarAtualizacaoCompleta(); // Novo método para enviar o relatório completo
 
     // Mapa para controlar o estado da notificação para cada marca
     std::map<std::string, bool> notificacaoEnviada; 
-    // ADICIONADO: Controle de tempo para notificações
-    std::chrono::steady_clock::time_point ultimaVerificacao;
-    static const int INTERVALO_VERIFICACAO_SEGUNDOS = 30;
-    
-    // ADICIONADO: Armazena o estado anterior para comparação
-    std::map<std::string, int> estadoAnterior;
-
-    // ADICIONADO: Método auxiliar para verificar se deve checar notificações
-    bool deveVerificarNotificacao();
     // --- FIM DAS ALTERAÇÕES ---
 
     cv::Rect prateleiraArea; 
     int capacidadeTotal;
     std::map<std::string, int> contagemMarcas;
     mutable std::mutex mtx; // 'mutable' permite que seja travado em métodos 'const'
+
+    // Novos membros para controle de tempo
+    std::chrono::time_point<std::chrono::system_clock> ultimaAtualizacao;
+    const std::chrono::seconds intervaloAtualizacao{30}; // 30 segundos
+
 };
