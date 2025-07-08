@@ -28,6 +28,9 @@ private:
     std::chrono::steady_clock::time_point ultimaVerificacao;
     static const int INTERVALO_VERIFICACAO_SEGUNDOS = 30;
     
+    // ADICIONADO: Armazena o estado anterior para comparação
+    std::map<std::string, int> estadoAnterior;
+
     // ADICIONADO: Método auxiliar para verificar se deve checar notificações
     bool deveVerificarNotificacao();
     // --- FIM DAS ALTERAÇÕES ---
