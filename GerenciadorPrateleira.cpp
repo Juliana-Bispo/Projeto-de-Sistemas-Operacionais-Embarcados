@@ -39,9 +39,6 @@ bool GerenciadorPrateleira::deveVerificarNotificacao() {
 // MODIFICADO: A função 'atualizarContagem' agora verifica o tempo antes de enviar notificações
 void GerenciadorPrateleira::atualizarContagem(const map<string, int>& novasDeteccoes) {
     lock_guard<mutex> lock(mtx);
-    
-    // Cria uma cópia do estado anterior para comparação
-    map<string, int> contagemAnterior = contagemMarcas;
 
     // Reseta a contagem atual para preencher com as novas detecções
     for (auto& par : contagemMarcas) {
@@ -63,6 +60,8 @@ void GerenciadorPrateleira::atualizarContagem(const map<string, int>& novasDetec
 
             int contagemAnt = contagemAnterior[marca];
 
+            cout << "DEBUG: " << marca << " - Anterior: " << contagemAnt << ", Atual: " << contagemAtual << ", Notificacao enviada: " << (notificacaoEnviada[marca] ? "SIM" : "NAO") << endl;
+
             // CONDIÇÃO 1: A lata sumiu (contagem foi de >0 para 0) E a notificação ainda não foi enviada
             if (contagemAtual == 0 && contagemAnt > 0 && !notificacaoEnviada[marca]) {
                 string mensagem = "ALERTA: Estoque de " + marca + " esta em falta!";
@@ -76,6 +75,8 @@ void GerenciadorPrateleira::atualizarContagem(const map<string, int>& novasDetec
                 notificacaoEnviada[marca] = false; // Permite que seja notificado novamente no futuro se faltar
             }
         }
+        // IMPORTANTE: Atualiza o estado anterior apenas após verificar as notificações
+        estadoAnterior = contagemMarcas;
     }
 }
 
