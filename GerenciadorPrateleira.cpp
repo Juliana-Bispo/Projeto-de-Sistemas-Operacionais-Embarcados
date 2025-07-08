@@ -1,41 +1,41 @@
 #include "GerenciadorPrateleira.hpp"
 #include <iostream>
 #include <cstdlib>
-#include <chrono>
 #include <sstream>
-#include <ctime>
 #include <iomanip>
 
 using namespace cv;
 using namespace std;
-using namespace std::chrono;
 
-// Configuração do Telegram
+// --- CONFIGURAÇÃO DO TELEGRAM ---
 const string TELEGRAM_BOT_TOKEN = "8032466567:AAHzaRC_RHM7peoVXQBwYdSv6MG57MkOZtA";
 const string TELEGRAM_CHAT_ID = "996099722";
 
-GerenciadorPrateleira::GerenciadorPrateleira() : intervaloAtualizacao(30) {
+GerenciadorPrateleira::GerenciadorPrateleira() 
+    : executandoEnvioPeriodico(false), intervaloEnvio(30) {
+    
     prateleiraArea = Rect(20, 40, 280, 180);
     capacidadeTotal = 4;
     
-    // Inicializa contagem e status de notificação
+    // Inicializa a contagem e o status de notificação para cada marca
     const vector<string> marcas = {"Guarana", "Coca-Cola", "Pepsi", "Fanta Laranja", "Desconhecida"};
     for (const auto& marca : marcas) {
         contagemMarcas[marca] = 0;
         notificacaoEnviada[marca] = false;
     }
-    
-    // Inicializa o tempo da última atualização
-    ultimaAtualizacao = system_clock::now();
+}
+
+GerenciadorPrateleira::~GerenciadorPrateleira() {
+    pararEnvioPeriodico();
 }
 
 void GerenciadorPrateleira::atualizarContagem(const map<string, int>& novasDeteccoes) {
     lock_guard<mutex> lock(mtx);
     
-    // Cópia do estado anterior para comparação
+    // Cria uma cópia do estado anterior para comparação
     map<string, int> contagemAnterior = contagemMarcas;
 
-    // Atualiza contagem
+    // Reseta a contagem atual para preencher com as novas detecções
     for (auto& par : contagemMarcas) {
         par.second = 0;
     }
@@ -45,18 +45,20 @@ void GerenciadorPrateleira::atualizarContagem(const map<string, int>& novasDetec
         }
     }
 
-    // Lógica de notificação
+    // --- LÓGICA DE NOTIFICAÇÃO IMEDIATA ---
     for (auto const& [marca, contagemAtual] : contagemMarcas) {
         if (marca == "Desconhecida") continue;
 
         int contagemAnt = contagemAnterior[marca];
 
+        // CONDIÇÃO 1: A lata sumiu (contagem foi de >0 para 0) E a notificação ainda não foi enviada
         if (contagemAtual == 0 && contagemAnt > 0 && !notificacaoEnviada[marca]) {
-            string mensagem = "⚠️ ALERTA: Estoque de " + marca + " está em falta!";
-            cout << "ENVIANDO NOTIFICACAO: " << mensagem << endl;
+            string mensagem = "🚨 ALERTA IMEDIATO: Estoque de " + marca + " esta em falta!";
+            cout << "ENVIANDO NOTIFICACAO IMEDIATA: " << mensagem << endl;
             enviarNotificacaoTelegram(mensagem);
             notificacaoEnviada[marca] = true;
         } 
+        // CONDIÇÃO 2: A lata voltou ao estoque, então resetamos o status
         else if (contagemAtual > 0 && notificacaoEnviada[marca]) {
             cout << "RESETANDO STATUS DE NOTIFICACAO PARA: " << marca << endl;
             notificacaoEnviada[marca] = false;
@@ -88,8 +90,7 @@ Mat GerenciadorPrateleira::criarJanelaEstoque() const {
 
     if(contagemMarcas.at("Desconhecida") > 0) {
         y += 30;
-        putText(janela, "Latas nao identificadas: " + to_string(contagemMarcas.at("Desconhecida")), 
-               Point(20, y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0,0,255), 1);
+        putText(janela, "Latas nao identificadas: " + to_string(contagemMarcas.at("Desconhecida")), Point(20, y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0,0,255), 1);
     }
 
     return janela;
@@ -99,54 +100,106 @@ const Rect& GerenciadorPrateleira::getAreaPrateleira() const {
     return prateleiraArea;
 }
 
-void GerenciadorPrateleira::verificarTempoNotificacao() {
-    auto agora = system_clock::now();
-    lock_guard<mutex> lock(mtx);
-    
-    if (agora - ultimaAtualizacao >= intervaloAtualizacao) {
-        enviarAtualizacaoCompleta();
-        ultimaAtualizacao = agora;
+void GerenciadorPrateleira::iniciarEnvioPeriodico() {
+    if (!executandoEnvioPeriodico.load()) {
+        executandoEnvioPeriodico.store(true);
+        threadPeriodica = thread(&GerenciadorPrateleira::threadEnvioPeriodico, this);
+        cout << "Envio periódico iniciado (intervalo: " << intervaloEnvio.count() << " segundos)" << endl;
     }
 }
 
-void GerenciadorPrateleira::enviarAtualizacaoCompleta() {
-    stringstream mensagem;
+void GerenciadorPrateleira::pararEnvioPeriodico() {
+    if (executandoEnvioPeriodico.load()) {
+        executandoEnvioPeriodico.store(false);
+        if (threadPeriodica.joinable()) {
+            threadPeriodica.join();
+        }
+        cout << "Envio periódico parado" << endl;
+    }
+}
+
+void GerenciadorPrateleira::definirIntervaloEnvio(int segundos) {
+    intervaloEnvio = chrono::seconds(segundos);
+    cout << "Intervalo de envio alterado para " << segundos << " segundos" << endl;
+}
+
+void GerenciadorPrateleira::threadEnvioPeriodico() {
+    while (executandoEnvioPeriodico.load()) {
+        // Aguarda o intervalo especificado
+        this_thread::sleep_for(intervaloEnvio);
+        
+        if (!executandoEnvioPeriodico.load()) break;
+        
+        // Cria e envia mensagem de status
+        string mensagemStatus = criarMensagemStatus();
+        
+        // Verifica se o status mudou desde o último envio para evitar spam
+        {
+            lock_guard<mutex> lock(mtxUltimoStatus);
+            if (mensagemStatus != ultimoStatusEnviado) {
+                cout << "ENVIANDO STATUS PERIODICO" << endl;
+                enviarNotificacaoTelegram(mensagemStatus);
+                ultimoStatusEnviado = mensagemStatus;
+            }
+        }
+    }
+}
+
+string GerenciadorPrateleira::criarMensagemStatus() const {
+    lock_guard<mutex> lock(mtx);
     
-    // Obtém a hora atual formatada
-    auto now = system_clock::to_time_t(system_clock::now());
-    mensagem << put_time(localtime(&now), "%H:%M:%S") << " - 📊 ESTOQUE ATUALIZADO\n";
-    mensagem << "------------------------------\n";
+    // Obtém timestamp atual
+    auto now = chrono::system_clock::now();
+    auto time_t = chrono::system_clock::to_time_t(now);
+    
+    stringstream ss;
+    ss << "📊 RELATÓRIO DE ESTOQUE - " << put_time(localtime(&time_t), "%H:%M:%S") << "\n\n";
     
     int totalLatas = 0;
-    bool temEstoque = false;
+    vector<string> marcasEmFalta;
     
-    for (const auto& [marca, contagem] : contagemMarcas) {
+    for (auto const& [marca, contagem] : contagemMarcas) {
         if (marca != "Desconhecida") {
-            mensagem << "➡️ " << marca << ": " << contagem << "\n";
-            totalLatas += contagem;
-            if (contagem > 0) temEstoque = true;
+            if (contagem > 0) {
+                ss << "✅ " << marca << ": " << contagem << " unidade(s)\n";
+                totalLatas += contagem;
+            } else {
+                ss << "❌ " << marca << ": SEM ESTOQUE\n";
+                marcasEmFalta.push_back(marca);
+            }
         }
     }
     
-    mensagem << "------------------------------\n";
-    mensagem << "🔄 Total: " << totalLatas << "/" << capacidadeTotal << "\n";
-    
-    if (!temEstoque) {
-        mensagem << "\n🚨 PRATELEIRA VAZIA!\n";
-    }
+    ss << "\n📈 Total no estoque: " << totalLatas << "/" << capacidadeTotal << "\n";
     
     if (contagemMarcas.at("Desconhecida") > 0) {
-        mensagem << "\n⚠️ ATENÇÃO: " << contagemMarcas.at("Desconhecida") 
-                << " lata(s) não identificada(s)\n";
+        ss << "❓ Latas não identificadas: " << contagemMarcas.at("Desconhecida") << "\n";
     }
     
-    enviarNotificacaoTelegram(mensagem.str());
+    // Status geral
+    if (totalLatas >= capacidadeTotal) {
+        ss << "\n🟢 STATUS: ESTOQUE COMPLETO";
+    } else if (totalLatas > 0) {
+        ss << "\n🟡 STATUS: ESTOQUE PARCIAL";
+    } else {
+        ss << "\n🔴 STATUS: ESTOQUE VAZIO";
+    }
+    
+    if (!marcasEmFalta.empty()) {
+        ss << "\n\n⚠️ ATENÇÃO: Necessário repor estoque!";
+    }
+    
+    return ss.str();
 }
 
 void GerenciadorPrateleira::enviarNotificacaoTelegram(const string& mensagem) {
     string comando = "curl -s -X POST https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN +
                      "/sendMessage -d chat_id=" + TELEGRAM_CHAT_ID +
                      " -d text=\"" + mensagem + "\"";
-    comando += " &"; // Executa em background
+
+    // O '&' no final executa o comando em segundo plano para não travar o programa
+    comando += " &";
+
+    // Executa o comando no terminal
     system(comando.c_str());
 }
