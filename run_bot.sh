@@ -14,7 +14,7 @@ set -e
 
 # --- CONFIGURAÇÃO ---
 # O nome da pasta que contém o código C++ e o Makefile
-PROJETO_PASTA="pf"
+PROJETO_PASTA="."
 # O nome do executável final, conforme definido no Makefile
 EXECUTAVEL="detector_final"
 
@@ -52,7 +52,7 @@ if [ ! -d "$PROJETO_PASTA" ]; then
 fi
 
 # Entra na pasta do projeto
-cd "$PROJETO_PASTA/teste_atualizado"
+cd "$PROJETO_PASTA"
 
 echo "Limpando compilações antigas com 'make clean'..."
 make clean
