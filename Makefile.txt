@@ -1,0 +1,39 @@
+# Versão mínima do CMake
+cmake_minimum_required(VERSION 3.10)
+
+# Nome do projeto
+project(DetectorDePrateleira)
+
+# Encontra o pacote OpenCV (versão 4 é recomendada)
+find_package(OpenCV REQUIRED)
+
+# Adiciona as flags de compilação específicas do seu Makefile original
+# -std=c++17: Habilita C++17
+# -O3: Nível máximo de otimização
+# -mcpu=cortex-a53: Otimização para a CPU do Raspberry Pi 3/4
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -O3 -mcpu=cortex-a53")
+
+# Lista todos os arquivos-fonte (.cpp) do projeto
+# Adicionei o pipeline.cpp que estava no seu Makefile
+set(SOURCES
+    main.cpp
+    GerenciadorPrateleira.cpp
+    processamento.cpp
+    pipeline.cpp
+)
+
+# Define o nome do executável final para corresponder ao seu script
+set(TARGET_NAME detector_final)
+
+# Cria o executável a partir dos arquivos-fonte
+add_executable(${TARGET_NAME} ${SOURCES})
+
+# Linka o executável com as bibliotecas necessárias:
+# ${OpenCV_LIBS}: Todas as bibliotecas do OpenCV
+# pthread: Biblioteca para threads que estava no seu Makefile
+target_link_libraries(${TARGET_NAME} ${OpenCV_LIBS} pthread)
+
+# Mensagens de status (opcional, mas útil)
+message(STATUS "OpenCV version: ${OpenCV_VERSION}")
+message(STATUS "Compiler flags: ${CMAKE_CXX_FLAGS}")
+message(STATUS "Final executable: ${TARGET_NAME}")
