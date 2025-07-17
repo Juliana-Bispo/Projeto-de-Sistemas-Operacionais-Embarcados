@@ -2,6 +2,8 @@
 
 using namespace cv;
 using namespace std;
+// 8197945619:AAE29qftsp2QSaxwWizakv2RMc-s-az4DMo
+// 9
 
 GerenciadorPrateleira::GerenciadorPrateleira() {
     prateleiraArea = Rect(20, 40, 280, 180);
