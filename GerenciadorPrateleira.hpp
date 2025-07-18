@@ -5,20 +5,42 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <chrono>
+
+// Estrutura para rastrear cada lata individualmente
+struct LataRastreada {
+    int id;
+    cv::Rect ultimaPosicao;
+    std::string marca;
+    std::chrono::steady_clock::time_point ultimaVezVista;
+    bool alertaEnviado;
+};
 
 class GerenciadorPrateleira {
 public:
-    // Construtor
     GerenciadorPrateleira();
+    
+    // Atualiza o estado com base nas detecções do frame atual
+    void atualizarDeteccoes(const std::vector<std::pair<cv::Rect, std::string>>& novasDeteccoes);
+    
+    // Verifica se alguma lata rastreada está ausente por muito tempo
+    void verificarAlertasDeFalta();
 
-    // Métodos públicos
-    void atualizarContagem(const std::map<std::string, int>& novasDeteccoes);
+    // Funções de utilidade
     cv::Mat criarJanelaEstoque() const;
-    const cv::Rect& getAreaPrateleira() const; // Para a thread de detecção acessar a área
+    const cv::Rect& getAreaPrateleira() const;
 
 private:
-    cv::Rect prateleiraArea; 
-    int capacidadeTotal;
-    std::map<std::string, int> contagemMarcas;
-    mutable std::mutex mtx; // 'mutable' permite que seja travado em métodos 'const'
+    void enviarNotificacaoTelegram(const std::string& mensagem);
+    std::string formatarMensagemEstoque() const;
+    double calcularIoU(const cv::Rect& a, const cv::Rect& b) const;
+
+    cv::Rect prateleiraArea;
+    mutable std::mutex mtx;
+
+    std::vector<LataRastreada> latasRastreadas;
+    int proximoIdLata;
+
+    // Tempo em segundos que um item precisa estar ausente para gerar um alerta
+    const int SEGUNDOS_PARA_ALERTA = 30;
 };
