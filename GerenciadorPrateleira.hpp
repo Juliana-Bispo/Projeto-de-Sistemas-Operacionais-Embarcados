@@ -7,7 +7,7 @@
 #include <mutex>
 #include <chrono>
 
-// Estrutura para rastrear cada lata individualmente
+// NOVO: Estrutura para rastrear cada lata individualmente
 struct LataRastreada {
     int id;
     cv::Rect ultimaPosicao;
@@ -20,27 +20,26 @@ class GerenciadorPrateleira {
 public:
     GerenciadorPrateleira();
     
-    // Atualiza o estado com base nas detecções do frame atual
+    // ALTERADO: Recebe um vetor de detecções (posição e marca)
     void atualizarDeteccoes(const std::vector<std::pair<cv::Rect, std::string>>& novasDeteccoes);
     
-    // Verifica se alguma lata rastreada está ausente por muito tempo
+    // NOVO: Verifica alertas de falta com base no tempo
     void verificarAlertasDeFalta();
 
-    // Funções de utilidade
     cv::Mat criarJanelaEstoque() const;
     const cv::Rect& getAreaPrateleira() const;
 
 private:
     void enviarNotificacaoTelegram(const std::string& mensagem);
     std::string formatarMensagemEstoque() const;
-    double calcularIoU(const cv::Rect& a, const cv::Rect& b) const;
+    double calcularIoU(const cv::Rect& a, const cv::Rect& b) const; // Ajuda no rastreamento
 
     cv::Rect prateleiraArea;
     mutable std::mutex mtx;
 
+    // ALTERADO: A estrutura de dados principal agora é um vetor de latas rastreadas
     std::vector<LataRastreada> latasRastreadas;
     int proximoIdLata;
 
-    // Tempo em segundos que um item precisa estar ausente para gerar um alerta
-    const int SEGUNDOS_PARA_ALERTA = 30;
+    const int SEGUNDOS_PARA_ALERTA = 30; // Tempo de espera para confirmar a ausência
 };
